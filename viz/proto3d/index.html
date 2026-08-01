@@ -1,0 +1,598 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TakumiCup — g-force prototype</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14171c">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  html, body { margin: 0; height: 100%; background: #14171c; color: #ddd; font-family: system-ui, sans-serif; overflow: hidden; }
+  #scene { position: absolute; inset: 0; }
+  #panel {
+    position: absolute; top: 16px; left: 16px; width: 260px;
+    max-height: calc(100vh - 32px); overflow-y: auto;
+    background: rgba(20,23,28,0.85); border: 1px solid #333; border-radius: 10px;
+    padding: 14px 16px; backdrop-filter: blur(4px);
+  }
+  #panel.collapsed { display: none; }
+  #menuToggle {
+    position: absolute; top: 16px; left: 16px; width: 40px; height: 40px;
+    background: rgba(20,23,28,0.85); border: 1px solid #333; border-radius: 10px;
+    color: #ddd; font-size: 18px; cursor: pointer; backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center;
+  }
+  #menuToggle.visible { display: flex; }
+  #panel h1 { font-size: 14px; margin: 0 0 10px; color: #9ad; }
+  #panel label { display: block; font-size: 11px; color: #9aa; margin-top: 10px; }
+  #panel input[type=range] { width: 100%; }
+  #panel label.checkboxRow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  #panel label.checkboxRow input[type=checkbox] { margin: 0; }
+  #joystick {
+    width: 160px; height: 160px; margin: 8px auto 0; border-radius: 50%;
+    background: radial-gradient(circle, #1c2027 0%, #10131a 100%);
+    border: 1px solid #333; position: relative; touch-action: none;
+  }
+  #stick {
+    width: 34px; height: 34px; border-radius: 50%; background: #6cf;
+    position: absolute; left: 63px; top: 63px; box-shadow: 0 0 10px #6cf8;
+    cursor: grab;
+  }
+  #readout { font-size: 11px; color: #8c8; margin-top: 10px; line-height: 1.6; white-space: pre; }
+  #resetBtn, .panelBtn {
+    margin-top: 10px; width: 100%; padding: 6px; background: #263042; color: #cde;
+    border: 1px solid #445; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  #resetBtn:hover, .panelBtn:hover { background: #2f3c52; }
+  .panelBtn.active { background: #2a5a3a; border-color: #3a7a4a; }
+  #liveStatus { font-size: 10px; color: #7a8; margin-top: 4px; }
+  hr.sep { border: none; border-top: 1px solid #333; margin: 12px 0 4px; }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<button id="menuToggle">☰</button>
+<div id="panel">
+  <h1>TakumiCup — g-force prototype</h1>
+  <button id="collapseBtn" class="panelBtn">Hide menu</button>
+
+  <hr class="sep">
+  <label>Live accelerometer (phone)</label>
+  <button id="liveAccelBtn" class="panelBtn">Enable phone accelerometer</button>
+  <button id="recenterBtn" class="panelBtn">Recentre (zero current tilt)</button>
+  <div id="liveStatus">Off -- using joystick below</div>
+  <hr class="sep">
+
+  <label>Horizontal g_eff (drag the dot)</label>
+  <div id="joystick"><div id="stick"></div></div>
+
+  <label>Vertical g_eff (az): <span id="azVal">1.00</span> g</label>
+  <input id="az" type="range" min="0.3" max="1.5" step="0.01" value="1.0">
+
+  <label>Natural freq scale</label>
+  <input id="freqScale" type="range" min="0.3" max="3" step="0.05" value="1.0">
+
+  <label>Damping ratio</label>
+  <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.4">
+
+  <label>Fill level: <span id="fillVal">93</span>%</label>
+  <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.927">
+
+  <label>LED columns (around): <span id="ledColsVal">24</span></label>
+  <input id="ledCols" type="range" min="6" max="60" step="1" value="24">
+
+  <label>LED rows (vertical): <span id="ledRowsVal">12</span></label>
+  <input id="ledRows" type="range" min="2" max="40" step="1" value="12">
+
+  <label class="checkboxRow">
+    <input id="showSurface" type="checkbox" checked>
+    Show virtual water surface
+  </label>
+
+  <button id="resetBtn">Release (spring back to rest)</button>
+
+  <div id="readout"></div>
+</div>
+
+<script src="config.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// Offline-capable PWA: once this loads with a signal, the service worker
+// caches everything (this file, config.js, vendored three.js/OrbitControls,
+// icons) so it keeps working with zero connectivity -- built for use in a
+// moving car, not tethered to any dev machine.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch((err) => console.warn("SW registration failed:", err));
+}
+
+const CFG = window.TAKUMI_CONFIG;
+
+// ---- Cup geometry (mirrors geom/ConeGeometry.h defaults) ----
+const RIM_R = CFG.cup.rimDiameterMm / 2, BASE_R = CFG.cup.baseDiameterMm / 2;
+const HEIGHT = CFG.cup.heightMm;
+const TAN_ALPHA = (RIM_R - BASE_R) / HEIGHT;
+// fillFraction/FILL_HEIGHT/FILL_VOLUME are mutable: the fill-level slider
+// rebuilds the h0 lookup table live (see rebuildH0Table below).
+let fillFraction = CFG.cup.fillFraction;
+let FILL_HEIGHT = HEIGHT * fillFraction;
+let FILL_VOLUME = 0;
+
+function radiusAtHeight(z) {
+  z = Math.max(0, Math.min(HEIGHT, z));
+  return BASE_R + z * TAN_ALPHA;
+}
+function volumeBelowHeight(z) {
+  z = Math.max(0, Math.min(HEIGHT, z));
+  const rz = radiusAtHeight(z);
+  return (Math.PI * z / 3) * (BASE_R * BASE_R + BASE_R * rz + rz * rz);
+}
+function wallHeightAtRadius(r) {
+  if (r <= BASE_R) return 0;
+  return Math.max(0, Math.min(HEIGHT, (r - BASE_R) / TAN_ALPHA));
+}
+
+// ---- geom::TiltedSurface port: 64-entry h0(tanPhi) lookup via numeric
+// volume integration + bisection, and the exact wall z(theta) formula. ----
+const LOOKUP_SIZE = 64, MAX_TAN_PHI = 3.0;
+function volumeUnderPlane(h0, tanPhi) {
+  const NR = 48, NTH = 72;
+  const dr = RIM_R / NR, dth = (2 * Math.PI) / NTH;
+  let vol = 0;
+  for (let i = 0; i < NR; i++) {
+    const r = (i + 0.5) * dr;
+    const zWall = wallHeightAtRadius(r);
+    for (let j = 0; j < NTH; j++) {
+      const theta = (j + 0.5) * dth;
+      const zPlane = h0 + tanPhi * r * Math.cos(theta);
+      const top = Math.max(zWall, Math.min(HEIGHT, zPlane));
+      vol += (top - zWall) * r * dr * dth;
+    }
+  }
+  return vol;
+}
+const h0Table = new Float64Array(LOOKUP_SIZE);
+function rebuildH0Table() {
+  FILL_HEIGHT = HEIGHT * fillFraction;
+  FILL_VOLUME = volumeBelowHeight(FILL_HEIGHT);
+  for (let k = 0; k < LOOKUP_SIZE; k++) {
+    const tanPhi = (MAX_TAN_PHI * k) / (LOOKUP_SIZE - 1);
+    let lo = -HEIGHT * 2, hi = HEIGHT * 2;
+    for (let iter = 0; iter < 34; iter++) {
+      const mid = 0.5 * (lo + hi);
+      if (volumeUnderPlane(mid, tanPhi) < FILL_VOLUME) lo = mid; else hi = mid;
+    }
+    h0Table[k] = 0.5 * (lo + hi);
+  }
+}
+rebuildH0Table();
+function h0ForTanPhi(tanPhi) {
+  const t = Math.max(0, Math.min(MAX_TAN_PHI, tanPhi));
+  const step = MAX_TAN_PHI / (LOOKUP_SIZE - 1);
+  const pos = t / step;
+  let idx = Math.max(0, Math.min(LOOKUP_SIZE - 2, Math.floor(pos)));
+  const frac = pos - idx;
+  return h0Table[idx] * (1 - frac) + h0Table[idx + 1] * frac;
+}
+function wallHeightAtAzimuth(h0, tanPhi, theta) {
+  const c = Math.cos(theta);
+  const denom = 1 - tanPhi * TAN_ALPHA * c;
+  const safe = Math.abs(denom) < 1e-6 ? (denom < 0 ? -1e-6 : 1e-6) : denom;
+  const z = (h0 + BASE_R * tanPhi * c) / safe;
+  return Math.max(0, Math.min(HEIGHT, z));
+}
+
+// ---- sim::TiltOscillator port ----
+const G0 = 9.80665;
+const osc = {
+  tx: 0, ty: 0, vx: 0, vy: 0,
+  rippleAmp: 0, prevTx: 0, prevTy: 0, havePrev: false,
+};
+function stepOsc(ax, ay, az, dt, freqScale, dampingRatio) {
+  const azSafe = Math.max(az, 1e-6);
+  const targetTx = ax / azSafe, targetTy = ay / azSafe;
+  const gMagMs2 = G0 * Math.sqrt(ax * ax + ay * ay + az * az);
+  const lrefM = Math.max(CFG.oscillator.referenceLengthMm, 1) / 1000;
+  const omega0 = freqScale * Math.sqrt(gMagMs2 / lrefM);
+  const dampCoeff = 2 * dampingRatio * omega0;
+
+  const axAcc = -omega0 * omega0 * (osc.tx - targetTx) - dampCoeff * osc.vx;
+  const ayAcc = -omega0 * omega0 * (osc.ty - targetTy) - dampCoeff * osc.vy;
+  osc.vx += dt * axAcc; osc.vy += dt * ayAcc;
+  osc.tx += dt * osc.vx; osc.ty += dt * osc.vy;
+
+  const mag = Math.hypot(osc.tx, osc.ty);
+  if (mag > MAX_TAN_PHI) { const s = MAX_TAN_PHI / mag; osc.tx *= s; osc.ty *= s; }
+
+  osc.rippleAmp *= Math.exp(-CFG.ripple.decayPerSec * dt);
+  if (osc.havePrev && dt > 1e-9) {
+    const dTx = (targetTx - osc.prevTx) / dt, dTy = (targetTy - osc.prevTy) / dt;
+    osc.rippleAmp += CFG.ripple.gainPerJerk * Math.hypot(dTx, dTy) * dt;
+  }
+  osc.prevTx = targetTx; osc.prevTy = targetTy; osc.havePrev = true;
+}
+function currentWallHeight(theta, tSec) {
+  const tanPhi = Math.hypot(osc.tx, osc.ty);
+  const dir = Math.atan2(osc.ty, osc.tx);
+  const h0 = h0ForTanPhi(tanPhi);
+  const base = wallHeightAtAzimuth(h0, tanPhi, theta - dir);
+  const ripple = osc.rippleAmp * Math.sin(CFG.ripple.waveNumber * theta - CFG.ripple.angularSpeedRadPerSec * tSec);
+  return Math.max(0, Math.min(HEIGHT, base + ripple));
+}
+
+// ---- three.js scene ----
+const container = document.getElementById("scene");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14171c);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 2000);
+// Default view is "behind" the high side: joystick fully up -> ay=+max ->
+// ty=+max -> tilt direction dir=atan2(ty,tx)=+90deg -> water climbs highest
+// at theta=+90deg, which is the +Z direction (col x=r*cos(theta), z=r*sin(theta)).
+// So the camera sits on +Z looking back at the cup, putting that climbing
+// side nearest the viewer when the stick is pushed up.
+camera.position.set(0, 150, 280);
+camera.lookAt(0, HEIGHT * 0.4, 0);
+
+// Left-drag orbits, right-drag pans, wheel zooms -- standard OrbitControls
+// defaults. The UI panel/joystick sit on top in their own DOM element and
+// stop pointer events from reaching the canvas underneath them, so dragging
+// inside the panel doesn't fight with orbiting the camera.
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, HEIGHT * 0.4, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 80;
+controls.maxDistance = 800;
+controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+dirLight.position.set(150, 300, 200);
+scene.add(dirLight);
+
+const cupGroup = new THREE.Group();
+scene.add(cupGroup);
+
+// Cup wall: three.js CylinderGeometry(radiusTop, radiusBottom, height) is
+// already an exact frustum, matching geom::ConeGeometry.
+const cupGeo = new THREE.CylinderGeometry(RIM_R, BASE_R, HEIGHT, 48, 1, true);
+cupGeo.translate(0, HEIGHT / 2, 0);
+const cupMat = new THREE.MeshStandardMaterial({
+  color: 0x3a4048, transparent: true, opacity: 0.35, side: THREE.DoubleSide, roughness: 0.4,
+});
+const cupMesh = new THREE.Mesh(cupGeo, cupMat);
+cupGroup.add(cupMesh);
+
+const baseGeo = new THREE.CircleGeometry(BASE_R, 48);
+baseGeo.rotateX(-Math.PI / 2);
+const baseMesh = new THREE.Mesh(baseGeo, cupMat);
+cupGroup.add(baseMesh);
+
+// Water surface: a ring of vertices at (r_wall(theta), theta) sampled around
+// the rim via currentWallHeight, triangle-fanned from the axis point. This
+// is the "true water surface" view.
+const SURF_SEGMENTS = 64;
+const surfGeo = new THREE.BufferGeometry();
+const surfPositions = new Float32Array((SURF_SEGMENTS + 2) * 3);
+const surfIndices = [];
+for (let j = 0; j < SURF_SEGMENTS; j++) {
+  surfIndices.push(0, j + 1, ((j + 1) % SURF_SEGMENTS) + 1);
+}
+surfGeo.setIndex(surfIndices);
+surfGeo.setAttribute("position", new THREE.BufferAttribute(surfPositions, 3));
+surfGeo.computeVertexNormals();
+const surfMat = new THREE.MeshStandardMaterial({
+  color: 0x2f8fd6, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+  metalness: 0.1, roughness: 0.15,
+});
+const surfMesh = new THREE.Mesh(surfGeo, surfMat);
+cupGroup.add(surfMesh);
+
+// Full LED panel: CFG.led.columns around the wall x CFG.led.rows up the
+// wall, sitting flush on the actual cone surface (radiusAtHeight per row,
+// not a single ring floating above the rim).
+//
+// rowHeightMm/columnAzimuthRad/rowSpacingMm/ledBrightness/gammaCorrect below
+// are a deliberate line-for-line port of geom::LedPanel + sim::LedState
+// (geom/LedMapping.h/cpp, sim/LedState.h/cpp) -- that C++ is the actual
+// portable logic that will run on the ESP32 (row placement, serpentine
+// wiring order, sub-LED vertical antialiasing, gamma-corrected PWM), and
+// this viz is meant to reflect it, not invent its own layout or brightness
+// rule. Density (columns/rows) is config-driven and rebuildable live so the
+// two column/row sliders below double as a real hardware-density study.
+let ledDots = [];
+let ledGeo = null;
+function rowHeightMm(row, rows) {
+  const lo = CFG.led.marginFromBaseMm, hi = HEIGHT - CFG.led.marginFromRimMm;
+  return rows <= 1 ? (lo + hi) / 2 : lo + (hi - lo) * row / (rows - 1);
+}
+function rowSpacingMm(rows) {
+  if (rows <= 1) return 0;
+  const lo = CFG.led.marginFromBaseMm, hi = HEIGHT - CFG.led.marginFromRimMm;
+  return (hi - lo) / (rows - 1);
+}
+function columnAzimuthRad(col, columns) {
+  return (2 * Math.PI * col) / columns;
+}
+// Fractional brightness (0..1): 0 dry, 1 fully submerged, linear fraction
+// while the water surface is passing through this row's gap -- the sub-LED
+// antialiasing that keeps a gently sloshing surface from visibly jumping
+// row to row.
+function ledBrightness(waterZ, rowZ, spacing) {
+  if (spacing <= 0) return waterZ >= rowZ ? 1 : 0;
+  return Math.max(0, Math.min(1, (waterZ - rowZ) / spacing));
+}
+function gammaCorrect(brightness01, gamma = 2.2) {
+  return Math.pow(Math.max(0, Math.min(1, brightness01)), 1 / gamma);
+}
+function rebuildLedGrid() {
+  for (const led of ledDots) cupGroup.remove(led.mesh);
+  ledDots = [];
+  if (ledGeo) ledGeo.dispose();
+
+  const { columns, rows, dotRadiusMm } = CFG.led;
+  const spacing = rowSpacingMm(rows);
+  ledGeo = new THREE.SphereGeometry(dotRadiusMm, 8, 8);
+  for (let row = 0; row < rows; row++) {
+    const z = rowHeightMm(row, rows);
+    const r = radiusAtHeight(z) + dotRadiusMm * 1.3; // sit just outside the wall surface
+    for (let col = 0; col < columns; col++) {
+      const theta = columnAzimuthRad(col, columns);
+      const mat = new THREE.MeshBasicMaterial({ color: CFG.led.colorOff });
+      const dot = new THREE.Mesh(ledGeo, mat);
+      dot.position.set(r * Math.cos(theta), z, r * Math.sin(theta));
+      cupGroup.add(dot);
+      ledDots.push({ mesh: dot, theta, z, spacing });
+    }
+  }
+}
+rebuildLedGrid();
+
+const gridHelper = new THREE.GridHelper(400, 20, 0x2a2f38, 0x20242c);
+scene.add(gridHelper);
+
+function updateSurfaceMesh(tSec) {
+  const pos = surfGeo.attributes.position;
+  const h0 = h0ForTanPhi(Math.hypot(osc.tx, osc.ty));
+  pos.setXYZ(0, 0, h0, 0);
+  for (let j = 0; j < SURF_SEGMENTS; j++) {
+    const theta = (2 * Math.PI * j) / SURF_SEGMENTS;
+    const z = currentWallHeight(theta, tSec);
+    pos.setXYZ(j + 1, RIM_R * Math.cos(theta), z, RIM_R * Math.sin(theta));
+  }
+  pos.needsUpdate = true;
+  surfGeo.computeVertexNormals();
+
+  const colorOff = new THREE.Color(CFG.led.colorOff);
+  const colorOn = new THREE.Color(CFG.led.colorOn);
+  for (const led of ledDots) {
+    const waterZ = currentWallHeight(led.theta, tSec);
+    const brightness = ledBrightness(waterZ, led.z, led.spacing);
+    const displayT = gammaCorrect(brightness); // perceptual, not linear -- see gammaCorrect12Bit in sim/LedState.cpp
+    led.mesh.material.color.copy(colorOff).lerp(colorOn, displayT);
+  }
+}
+
+// ---- UI: joystick + sliders ----
+const joystick = document.getElementById("joystick");
+const stick = document.getElementById("stick");
+const azSlider = document.getElementById("az");
+const azVal = document.getElementById("azVal");
+const freqSlider = document.getElementById("freqScale");
+const dampSlider = document.getElementById("damping");
+const fillSlider = document.getElementById("fillFraction");
+const fillVal = document.getElementById("fillVal");
+const ledColsSlider = document.getElementById("ledCols");
+const ledColsVal = document.getElementById("ledColsVal");
+const ledRowsSlider = document.getElementById("ledRows");
+const ledRowsVal = document.getElementById("ledRowsVal");
+const showSurfaceCheckbox = document.getElementById("showSurface");
+const readout = document.getElementById("readout");
+const resetBtn = document.getElementById("resetBtn");
+const panel = document.getElementById("panel");
+const menuToggle = document.getElementById("menuToggle");
+const collapseBtn = document.getElementById("collapseBtn");
+const liveAccelBtn = document.getElementById("liveAccelBtn");
+const recenterBtn = document.getElementById("recenterBtn");
+const liveStatus = document.getElementById("liveStatus");
+
+function collapseMenu() {
+  panel.classList.add("collapsed");
+  menuToggle.classList.add("visible");
+}
+function expandMenu() {
+  panel.classList.remove("collapsed");
+  menuToggle.classList.remove("visible");
+}
+collapseBtn.addEventListener("click", collapseMenu);
+menuToggle.addEventListener("click", expandMenu);
+
+// ---- Live phone accelerometer ----
+// accelerationIncludingGravity is already specific force (m/s^2), same
+// convention TiltOscillator expects for g_eff -- no separate tilt/gravity
+// split needed. Recentre re-aligns whatever the phone's raw axes/mounting
+// angle currently are to the cup's z axis, via a quaternion, so it works
+// regardless of how the holder tilts the phone -- no manual axis mapping.
+let liveAccelActive = false;
+let liveAccel = { x: 0, y: 0, z: 1 }; // in g's, cup-frame, after calibration
+const lastRawAccel = new THREE.Vector3(0, 0, G0);
+let refQuaternion = new THREE.Quaternion();
+
+function onDeviceMotion(e) {
+  const g = e.accelerationIncludingGravity;
+  if (!g || g.x === null || g.x === undefined) return;
+  lastRawAccel.set(g.x, g.y, g.z);
+  const calibrated = lastRawAccel.clone().applyQuaternion(refQuaternion).divideScalar(G0);
+  liveAccel.x = calibrated.x; liveAccel.y = calibrated.y; liveAccel.z = calibrated.z;
+}
+
+function recentre() {
+  if (lastRawAccel.lengthSq() < 1e-6) return;
+  refQuaternion = new THREE.Quaternion().setFromUnitVectors(
+    lastRawAccel.clone().normalize(), new THREE.Vector3(0, 0, 1)
+  );
+}
+
+async function enableLiveAccel() {
+  // iOS requires an explicit permission prompt from a user gesture; Android
+  // Chrome doesn't expose requestPermission at all, so this branch is a
+  // no-op there and we just start listening directly below.
+  if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+    try {
+      const perm = await DeviceMotionEvent.requestPermission();
+      if (perm !== "granted") { liveStatus.textContent = "Motion permission denied"; return; }
+    } catch (err) {
+      liveStatus.textContent = "Motion permission request failed: " + err.message;
+      return;
+    }
+  }
+  window.addEventListener("devicemotion", onDeviceMotion);
+  liveAccelActive = true;
+  liveAccelBtn.classList.add("active");
+  liveAccelBtn.textContent = "Disable phone accelerometer";
+  liveStatus.textContent = "Live -- rest the phone in the holder, then tap Recentre";
+}
+
+function disableLiveAccel() {
+  window.removeEventListener("devicemotion", onDeviceMotion);
+  liveAccelActive = false;
+  liveAccelBtn.classList.remove("active");
+  liveAccelBtn.textContent = "Enable phone accelerometer";
+  liveStatus.textContent = "Off -- using joystick below";
+}
+
+liveAccelBtn.addEventListener("click", () => {
+  if (liveAccelActive) disableLiveAccel(); else enableLiveAccel();
+});
+recenterBtn.addEventListener("click", recentre);
+
+// Sliders start from config, and write back into CFG live so it stays the
+// single source of truth for anything else that reads it.
+azSlider.value = CFG.simDefaults.azG;
+azVal.textContent = CFG.simDefaults.azG.toFixed(2);
+freqSlider.value = CFG.oscillator.naturalFreqScale;
+dampSlider.value = CFG.oscillator.dampingRatio;
+fillSlider.value = fillFraction;
+fillVal.textContent = Math.round(fillFraction * 100);
+ledColsSlider.value = CFG.led.columns;
+ledColsVal.textContent = CFG.led.columns;
+ledRowsSlider.value = CFG.led.rows;
+ledRowsVal.textContent = CFG.led.rows;
+
+let stickX = 0, stickY = 0; // -1..1, maps to ax,ay in g
+const STICK_RANGE = 63;
+let dragging = false;
+
+function setStickVisual(nx, ny) {
+  stick.style.left = (63 + nx * STICK_RANGE) + "px";
+  stick.style.top = (63 + ny * STICK_RANGE) + "px";
+}
+function pointerToStick(e) {
+  const rect = joystick.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  let nx = (e.clientX - cx) / STICK_RANGE, ny = (e.clientY - cy) / STICK_RANGE;
+  const mag = Math.hypot(nx, ny);
+  if (mag > 1) { nx /= mag; ny /= mag; }
+  stickX = nx; stickY = ny;
+  setStickVisual(nx, ny);
+}
+stick.addEventListener("pointerdown", (e) => {
+  dragging = true;
+  stick.setPointerCapture(e.pointerId);
+  if (liveAccelActive) disableLiveAccel();
+});
+window.addEventListener("pointermove", (e) => { if (dragging) pointerToStick(e); });
+window.addEventListener("pointerup", () => { dragging = false; });
+resetBtn.addEventListener("click", () => { stickX = 0; stickY = 0; setStickVisual(0, 0); });
+
+azSlider.addEventListener("input", () => {
+  CFG.simDefaults.azG = parseFloat(azSlider.value);
+  azVal.textContent = CFG.simDefaults.azG.toFixed(2);
+});
+freqSlider.addEventListener("input", () => { CFG.oscillator.naturalFreqScale = parseFloat(freqSlider.value); });
+dampSlider.addEventListener("input", () => { CFG.oscillator.dampingRatio = parseFloat(dampSlider.value); });
+fillSlider.addEventListener("input", () => {
+  fillFraction = parseFloat(fillSlider.value);
+  CFG.cup.fillFraction = fillFraction;
+  fillVal.textContent = Math.round(fillFraction * 100);
+  rebuildH0Table();
+});
+ledColsSlider.addEventListener("input", () => {
+  CFG.led.columns = parseInt(ledColsSlider.value, 10);
+  ledColsVal.textContent = CFG.led.columns;
+  rebuildLedGrid();
+});
+ledRowsSlider.addEventListener("input", () => {
+  CFG.led.rows = parseInt(ledRowsSlider.value, 10);
+  ledRowsVal.textContent = CFG.led.rows;
+  rebuildLedGrid();
+});
+showSurfaceCheckbox.addEventListener("change", () => {
+  surfMesh.visible = showSurfaceCheckbox.checked;
+});
+
+// ---- animation loop ----
+const MAX_TILT_G = 0.6; // stick fully deflected = 0.6g horizontal
+const clock = new THREE.Clock();
+let simTime = 0;
+const FIXED_DT = 1 / 200;
+let accumulator = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const frameDt = Math.min(clock.getDelta(), 0.05);
+  accumulator += frameDt;
+
+  let ax, ay, az;
+  if (liveAccelActive) {
+    ax = liveAccel.x; ay = liveAccel.y; az = liveAccel.z;
+  } else {
+    ax = stickX * MAX_TILT_G;
+    ay = -stickY * MAX_TILT_G; // screen-up = +y forward
+    az = CFG.simDefaults.azG;
+  }
+  const freqScale = CFG.oscillator.naturalFreqScale;
+  const dampingRatio = CFG.oscillator.dampingRatio;
+
+  while (accumulator >= FIXED_DT) {
+    stepOsc(ax, ay, az, FIXED_DT, freqScale, dampingRatio);
+    simTime += FIXED_DT;
+    accumulator -= FIXED_DT;
+  }
+
+  updateSurfaceMesh(simTime);
+
+  const tanPhi = Math.hypot(osc.tx, osc.ty);
+  readout.textContent =
+    `g_eff = (${ax.toFixed(2)}, ${ay.toFixed(2)}, ${az.toFixed(2)}) g\n` +
+    `tan(phi) = ${tanPhi.toFixed(3)}  dir = ${(Math.atan2(osc.ty, osc.tx) * 180 / Math.PI).toFixed(0)}deg\n` +
+    `h0 = ${h0ForTanPhi(tanPhi).toFixed(1)} mm   ripple = ${osc.rippleAmp.toFixed(3)} mm`;
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

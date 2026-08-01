@@ -1,0 +1,7 @@
+/build/
+*.exe
+*.o
+*.obj
+replay_snapshots.csv
+__pycache__/
+*.pyc
