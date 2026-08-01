@@ -65,8 +65,15 @@
   <div id="liveStatus">Off -- using joystick below</div>
   <hr class="sep">
 
-  <label>Horizontal g_eff (drag the dot)</label>
-  <div id="joystick"><div id="stick"></div></div>
+  <label>Camera</label>
+  <button id="resetCameraBtn" class="panelBtn">Reset horizontal rotation</button>
+  <button id="rotateCamera180Btn" class="panelBtn">Rotate 180°</button>
+  <hr class="sep">
+
+  <div id="joystickSection">
+    <label>Horizontal g_eff (drag the dot)</label>
+    <div id="joystick"><div id="stick"></div></div>
+  </div>
 
   <label>Sensitivity: <span id="sensitivityVal">1.00</span>x</label>
   <input id="sensitivity" type="range" min="0.3" max="3" step="0.05" value="1.0">
@@ -77,14 +84,23 @@
   <label>Damping ratio</label>
   <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.4">
 
-  <label>Fill level: <span id="fillVal">80</span>%</label>
-  <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.80">
+  <label>Fill level: <span id="fillVal">70</span>%</label>
+  <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.70">
 
   <label>LED columns (around): <span id="ledColsVal">24</span></label>
   <input id="ledCols" type="range" min="6" max="60" step="1" value="24">
 
   <label>LED rows (vertical): <span id="ledRowsVal">12</span></label>
   <input id="ledRows" type="range" min="2" max="40" step="1" value="12">
+
+  <label>Glass opacity: <span id="glassOpacityVal">0.35</span></label>
+  <input id="glassOpacity" type="range" min="0" max="1" step="0.01" value="0.35">
+
+  <label>Off-LED opacity: <span id="offLedOpacityVal">1.00</span></label>
+  <input id="offLedOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
+
+  <label>Floor grid opacity: <span id="floorGridOpacityVal">1.00</span></label>
+  <input id="floorGridOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
 
   <label class="checkboxRow">
     <input id="showSurface" type="checkbox" checked>
@@ -353,30 +369,43 @@ function rebuildLedGrid() {
     const r = radiusAtHeight(z) + dotRadiusMm * 1.3; // sit just outside the wall surface
     for (let col = 0; col < columns; col++) {
       const theta = columnAzimuthRad(col, columns);
-      const mat = new THREE.MeshBasicMaterial({ color: CFG.led.colorOff });
+      const mat = new THREE.MeshBasicMaterial({ color: CFG.led.colorOff, transparent: true });
       const dot = new THREE.Mesh(ledGeo, mat);
       dot.position.set(r * Math.cos(theta), z, r * Math.sin(theta));
       cupGroup.add(dot);
-      ledDots.push({ mesh: dot, theta, z, spacing });
+      ledDots.push({ mesh: dot, theta, z, spacing, row });
     }
   }
 }
 rebuildLedGrid();
 
 const gridHelper = new THREE.GridHelper(400, 20, 0x2a2f38, 0x20242c);
+gridHelper.material.transparent = true;
+gridHelper.material.opacity = CFG.rendering.floorGridOpacity;
 scene.add(gridHelper);
+
+// Rim-breach tracking: if the water surface touches the true rim (not just
+// the top LED row, which sits a small margin below it) at any azimuth, the
+// top LED row holds solid spill colour for CFG.rimBreachHoldSec seconds --
+// a deliberate "there was a breach" indicator that outlasts the moment
+// itself, since a real spill can recede within a single frame.
+let lastBreachSimTime = -Infinity;
 
 function updateSurfaceMesh(tSec) {
   const pos = surfGeo.attributes.position;
   const h0 = h0ForTanPhi(Math.hypot(osc.tx, osc.ty));
   pos.setXYZ(0, 0, h0, 0);
+  let touchedRim = false;
   for (let j = 0; j < SURF_SEGMENTS; j++) {
     const theta = (2 * Math.PI * j) / SURF_SEGMENTS;
     const z = currentWallHeight(theta, tSec);
     pos.setXYZ(j + 1, RIM_R * Math.cos(theta), z, RIM_R * Math.sin(theta));
+    if (z >= HEIGHT - 0.01) touchedRim = true;
   }
   pos.needsUpdate = true;
   surfGeo.computeVertexNormals();
+  if (touchedRim) lastBreachSimTime = tSec;
+  const breachHolding = (tSec - lastBreachSimTime) < CFG.rimBreachHoldSec;
 
   const colorOff = new THREE.Color(CFG.led.colorOff);
   const colorBase = new THREE.Color(CFG.led.colorBase);
@@ -387,9 +416,16 @@ function updateSurfaceMesh(tSec) {
   // topmost LED row, so water reaching above the normal fill line reads as
   // an escalating spill warning, with pure spill colour meaning the surface
   // is at or over the top row.
-  const topRowZ = rowHeightMm(CFG.led.rows - 1, CFG.led.rows);
+  const topRow = CFG.led.rows - 1;
+  const topRowZ = rowHeightMm(topRow, CFG.led.rows);
   const dangerColor = new THREE.Color();
   for (const led of ledDots) {
+    if (breachHolding && led.row === topRow) {
+      led.mesh.material.color.copy(colorSpill);
+      led.mesh.material.opacity = 1;
+      continue;
+    }
+
     if (led.z <= FILL_HEIGHT || topRowZ <= FILL_HEIGHT) {
       dangerColor.copy(colorBase);
     } else {
@@ -402,6 +438,7 @@ function updateSurfaceMesh(tSec) {
     const brightness = ledBrightness(waterZ, led.z, led.spacing);
     const displayT = gammaCorrect(brightness); // perceptual, not linear -- see gammaCorrect12Bit in sim/LedState.cpp
     led.mesh.material.color.copy(colorOff).lerp(dangerColor, displayT);
+    led.mesh.material.opacity = CFG.rendering.offLedOpacity + (1 - CFG.rendering.offLedOpacity) * displayT;
   }
 }
 
@@ -418,15 +455,24 @@ const ledColsSlider = document.getElementById("ledCols");
 const ledColsVal = document.getElementById("ledColsVal");
 const ledRowsSlider = document.getElementById("ledRows");
 const ledRowsVal = document.getElementById("ledRowsVal");
+const glassOpacitySlider = document.getElementById("glassOpacity");
+const glassOpacityVal = document.getElementById("glassOpacityVal");
+const offLedOpacitySlider = document.getElementById("offLedOpacity");
+const offLedOpacityVal = document.getElementById("offLedOpacityVal");
+const floorGridOpacitySlider = document.getElementById("floorGridOpacity");
+const floorGridOpacityVal = document.getElementById("floorGridOpacityVal");
 const showSurfaceCheckbox = document.getElementById("showSurface");
 const readout = document.getElementById("readout");
 const resetBtn = document.getElementById("resetBtn");
 const panel = document.getElementById("panel");
 const menuToggle = document.getElementById("menuToggle");
 const collapseBtn = document.getElementById("collapseBtn");
+const joystickSection = document.getElementById("joystickSection");
 const liveAccelBtn = document.getElementById("liveAccelBtn");
 const recenterBtn = document.getElementById("recenterBtn");
 const liveStatus = document.getElementById("liveStatus");
+const resetCameraBtn = document.getElementById("resetCameraBtn");
+const rotateCamera180Btn = document.getElementById("rotateCamera180Btn");
 
 function collapseMenu() {
   panel.classList.add("collapsed");
@@ -439,6 +485,30 @@ function expandMenu() {
 collapseBtn.addEventListener("click", collapseMenu);
 menuToggle.addEventListener("click", expandMenu);
 
+// ---- Camera: horizontal (azimuthal) reset/rotate, vertical untouched ----
+// theta=0 matches the home camera position (0,150,280), which sits on the
+// cup's +Z axis -- see the camera.position.set comment above for why that's
+// "behind" the high side when the joystick is pushed up.
+const HOME_AZIMUTH = 0;
+function getCameraSpherical() {
+  return new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+}
+function setCameraFromSpherical(sph) {
+  camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(sph));
+  camera.lookAt(controls.target);
+  controls.update();
+}
+resetCameraBtn.addEventListener("click", () => {
+  const sph = getCameraSpherical();
+  sph.theta = HOME_AZIMUTH;
+  setCameraFromSpherical(sph);
+});
+rotateCamera180Btn.addEventListener("click", () => {
+  const sph = getCameraSpherical();
+  sph.theta += Math.PI;
+  setCameraFromSpherical(sph);
+});
+
 // ---- Live phone accelerometer ----
 // accelerationIncludingGravity is already specific force (m/s^2), same
 // convention TiltOscillator expects for g_eff -- no separate tilt/gravity
@@ -449,11 +519,19 @@ let liveAccelActive = false;
 let liveAccel = { x: 0, y: 0, z: 1 }; // in g's, cup-frame, after calibration
 const lastRawAccel = new THREE.Vector3(0, 0, G0);
 let refQuaternion = new THREE.Quaternion();
+// True right after "Enable" is pressed until the first real reading comes
+// in -- that first reading auto-recentres, since the phone is presumably
+// already resting in the holder at that point, not mid-motion.
+let needsAutoRecentre = false;
 
 function onDeviceMotion(e) {
   const g = e.accelerationIncludingGravity;
   if (!g || g.x === null || g.x === undefined) return;
   lastRawAccel.set(g.x, g.y, g.z);
+  if (needsAutoRecentre) {
+    recentre();
+    needsAutoRecentre = false;
+  }
   const calibrated = lastRawAccel.clone().applyQuaternion(refQuaternion).divideScalar(G0);
   liveAccel.x = calibrated.x; liveAccel.y = calibrated.y; liveAccel.z = calibrated.z;
 }
@@ -478,16 +556,19 @@ async function enableLiveAccel() {
       return;
     }
   }
+  needsAutoRecentre = true;
   window.addEventListener("devicemotion", onDeviceMotion);
   liveAccelActive = true;
+  joystickSection.style.display = "none";
   liveAccelBtn.classList.add("active");
   liveAccelBtn.textContent = "Disable phone accelerometer";
-  liveStatus.textContent = "Live -- rest the phone in the holder, then tap Recentre";
+  liveStatus.textContent = "Live -- zeroed to the holder's current position";
 }
 
 function disableLiveAccel() {
   window.removeEventListener("devicemotion", onDeviceMotion);
   liveAccelActive = false;
+  joystickSection.style.display = "";
   liveAccelBtn.classList.remove("active");
   liveAccelBtn.textContent = "Enable phone accelerometer";
   liveStatus.textContent = "Off -- using joystick below";
@@ -510,6 +591,12 @@ ledColsSlider.value = CFG.led.columns;
 ledColsVal.textContent = CFG.led.columns;
 ledRowsSlider.value = CFG.led.rows;
 ledRowsVal.textContent = CFG.led.rows;
+glassOpacitySlider.value = CFG.rendering.glassOpacity;
+glassOpacityVal.textContent = CFG.rendering.glassOpacity.toFixed(2);
+offLedOpacitySlider.value = CFG.rendering.offLedOpacity;
+offLedOpacityVal.textContent = CFG.rendering.offLedOpacity.toFixed(2);
+floorGridOpacitySlider.value = CFG.rendering.floorGridOpacity;
+floorGridOpacityVal.textContent = CFG.rendering.floorGridOpacity.toFixed(2);
 
 let stickX = 0, stickY = 0; // -1..1, maps to ax,ay in g
 const STICK_RANGE = 63;
@@ -561,6 +648,20 @@ ledRowsSlider.addEventListener("input", () => {
 });
 showSurfaceCheckbox.addEventListener("change", () => {
   surfMesh.visible = showSurfaceCheckbox.checked;
+});
+glassOpacitySlider.addEventListener("input", () => {
+  CFG.rendering.glassOpacity = parseFloat(glassOpacitySlider.value);
+  glassOpacityVal.textContent = CFG.rendering.glassOpacity.toFixed(2);
+  cupMat.opacity = CFG.rendering.glassOpacity;
+});
+offLedOpacitySlider.addEventListener("input", () => {
+  CFG.rendering.offLedOpacity = parseFloat(offLedOpacitySlider.value);
+  offLedOpacityVal.textContent = CFG.rendering.offLedOpacity.toFixed(2);
+});
+floorGridOpacitySlider.addEventListener("input", () => {
+  CFG.rendering.floorGridOpacity = parseFloat(floorGridOpacitySlider.value);
+  floorGridOpacityVal.textContent = CFG.rendering.floorGridOpacity.toFixed(2);
+  gridHelper.material.opacity = CFG.rendering.floorGridOpacity;
 });
 
 // ---- animation loop ----

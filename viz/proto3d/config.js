@@ -15,7 +15,21 @@ window.TAKUMI_CONFIG = {
     // Drives where the "on" LEDs sit from rim to bottom at rest, the volume
     // the h0 lookup table conserves, and the floor of the spill-warning
     // colour gradient (below this height LEDs show the base colour).
-    fillFraction: 0.80,
+    fillFraction: 0.70,
+  },
+
+  // How long (seconds) the top LED row holds solid spill colour after the
+  // water surface touches the true rim, regardless of what that row's
+  // actual wet/dry state does in the meantime -- a deliberate "there was a
+  // breach" indicator, not just instantaneous state.
+  rimBreachHoldSec: 2.0,
+
+  // Rendering-only knobs (viz, not physics) -- defaults match what the page
+  // already looked like before these became sliders.
+  rendering: {
+    glassOpacity: 0.35,
+    offLedOpacity: 1.0,
+    floorGridOpacity: 1.0,
   },
 
   oscillator: {
