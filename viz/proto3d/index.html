@@ -68,8 +68,8 @@
   <label>Horizontal g_eff (drag the dot)</label>
   <div id="joystick"><div id="stick"></div></div>
 
-  <label>Vertical g_eff (az): <span id="azVal">1.00</span> g</label>
-  <input id="az" type="range" min="0.3" max="1.5" step="0.01" value="1.0">
+  <label>Sensitivity: <span id="sensitivityVal">1.00</span>x</label>
+  <input id="sensitivity" type="range" min="0.3" max="3" step="0.05" value="1.0">
 
   <label>Natural freq scale</label>
   <input id="freqScale" type="range" min="0.3" max="3" step="0.05" value="1.0">
@@ -77,8 +77,8 @@
   <label>Damping ratio</label>
   <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.4">
 
-  <label>Fill level: <span id="fillVal">93</span>%</label>
-  <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.927">
+  <label>Fill level: <span id="fillVal">80</span>%</label>
+  <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.80">
 
   <label>LED columns (around): <span id="ledColsVal">24</span></label>
   <input id="ledCols" type="range" min="6" max="60" step="1" value="24">
@@ -379,20 +379,37 @@ function updateSurfaceMesh(tSec) {
   surfGeo.computeVertexNormals();
 
   const colorOff = new THREE.Color(CFG.led.colorOff);
-  const colorOn = new THREE.Color(CFG.led.colorOn);
+  const colorBase = new THREE.Color(CFG.led.colorBase);
+  const colorWarn = new THREE.Color(CFG.led.colorWarn);
+  const colorSpill = new THREE.Color(CFG.led.colorSpill);
+  // Rows at/below the configured fill level read as normal water (base
+  // colour); rows above it gradient base->warn->spill as they approach the
+  // topmost LED row, so water reaching above the normal fill line reads as
+  // an escalating spill warning, with pure spill colour meaning the surface
+  // is at or over the top row.
+  const topRowZ = rowHeightMm(CFG.led.rows - 1, CFG.led.rows);
+  const dangerColor = new THREE.Color();
   for (const led of ledDots) {
+    if (led.z <= FILL_HEIGHT || topRowZ <= FILL_HEIGHT) {
+      dangerColor.copy(colorBase);
+    } else {
+      const t = Math.min(1, (led.z - FILL_HEIGHT) / (topRowZ - FILL_HEIGHT));
+      if (t <= 0.5) dangerColor.copy(colorBase).lerp(colorWarn, t / 0.5);
+      else dangerColor.copy(colorWarn).lerp(colorSpill, (t - 0.5) / 0.5);
+    }
+
     const waterZ = currentWallHeight(led.theta, tSec);
     const brightness = ledBrightness(waterZ, led.z, led.spacing);
     const displayT = gammaCorrect(brightness); // perceptual, not linear -- see gammaCorrect12Bit in sim/LedState.cpp
-    led.mesh.material.color.copy(colorOff).lerp(colorOn, displayT);
+    led.mesh.material.color.copy(colorOff).lerp(dangerColor, displayT);
   }
 }
 
 // ---- UI: joystick + sliders ----
 const joystick = document.getElementById("joystick");
 const stick = document.getElementById("stick");
-const azSlider = document.getElementById("az");
-const azVal = document.getElementById("azVal");
+const sensitivitySlider = document.getElementById("sensitivity");
+const sensitivityVal = document.getElementById("sensitivityVal");
 const freqSlider = document.getElementById("freqScale");
 const dampSlider = document.getElementById("damping");
 const fillSlider = document.getElementById("fillFraction");
@@ -483,8 +500,8 @@ recenterBtn.addEventListener("click", recentre);
 
 // Sliders start from config, and write back into CFG live so it stays the
 // single source of truth for anything else that reads it.
-azSlider.value = CFG.simDefaults.azG;
-azVal.textContent = CFG.simDefaults.azG.toFixed(2);
+sensitivitySlider.value = CFG.simDefaults.sensitivity;
+sensitivityVal.textContent = CFG.simDefaults.sensitivity.toFixed(2);
 freqSlider.value = CFG.oscillator.naturalFreqScale;
 dampSlider.value = CFG.oscillator.dampingRatio;
 fillSlider.value = fillFraction;
@@ -520,9 +537,9 @@ window.addEventListener("pointermove", (e) => { if (dragging) pointerToStick(e);
 window.addEventListener("pointerup", () => { dragging = false; });
 resetBtn.addEventListener("click", () => { stickX = 0; stickY = 0; setStickVisual(0, 0); });
 
-azSlider.addEventListener("input", () => {
-  CFG.simDefaults.azG = parseFloat(azSlider.value);
-  azVal.textContent = CFG.simDefaults.azG.toFixed(2);
+sensitivitySlider.addEventListener("input", () => {
+  CFG.simDefaults.sensitivity = parseFloat(sensitivitySlider.value);
+  sensitivityVal.textContent = CFG.simDefaults.sensitivity.toFixed(2);
 });
 freqSlider.addEventListener("input", () => { CFG.oscillator.naturalFreqScale = parseFloat(freqSlider.value); });
 dampSlider.addEventListener("input", () => { CFG.oscillator.dampingRatio = parseFloat(dampSlider.value); });
@@ -564,7 +581,11 @@ function animate() {
   } else {
     ax = stickX * MAX_TILT_G;
     ay = -stickY * MAX_TILT_G; // screen-up = +y forward
-    az = CFG.simDefaults.azG;
+    // sensitivity is a joystick-only convenience knob (real accelerometer
+    // input supplies its own true az above, no sensitivity involved) --
+    // az = 1/sensitivity so higher sensitivity means more tilt for the same
+    // joystick deflection, matching how the slider reads to the eye.
+    az = 1 / Math.max(CFG.simDefaults.sensitivity, 0.01);
   }
   const freqScale = CFG.oscillator.naturalFreqScale;
   const dampingRatio = CFG.oscillator.dampingRatio;
