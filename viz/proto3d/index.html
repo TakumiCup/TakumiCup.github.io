@@ -96,8 +96,8 @@
   <label>LED rows (vertical): <span id="ledRowsVal">12</span></label>
   <input id="ledRows" type="range" min="2" max="40" step="1" value="12">
 
-  <label>Glass opacity: <span id="glassOpacityVal">0.35</span></label>
-  <input id="glassOpacity" type="range" min="0" max="1" step="0.01" value="0.35">
+  <label>Cup opacity: <span id="cupOpacityVal">0.97</span></label>
+  <input id="cupOpacity" type="range" min="0" max="1" step="0.01" value="0.97">
 
   <label>Off-LED opacity: <span id="offLedOpacityVal">1.00</span></label>
   <input id="offLedOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
@@ -298,7 +298,8 @@ scene.add(cupGroup);
 const cupGeo = new THREE.CylinderGeometry(RIM_R, BASE_R, HEIGHT, 48, 1, true);
 cupGeo.translate(0, HEIGHT / 2, 0);
 const cupMat = new THREE.MeshStandardMaterial({
-  color: 0x3a4048, transparent: true, opacity: 0.35, side: THREE.DoubleSide, roughness: 0.4,
+  color: CFG.rendering.cupColor, transparent: true, opacity: CFG.rendering.cupOpacity,
+  side: THREE.DoubleSide, roughness: CFG.rendering.cupRoughness, metalness: CFG.rendering.cupMetalness,
 });
 const cupMesh = new THREE.Mesh(cupGeo, cupMat);
 cupGroup.add(cupMesh);
@@ -322,7 +323,7 @@ surfGeo.setIndex(surfIndices);
 surfGeo.setAttribute("position", new THREE.BufferAttribute(surfPositions, 3));
 surfGeo.computeVertexNormals();
 const surfMat = new THREE.MeshStandardMaterial({
-  color: 0x2f8fd6, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+  color: CFG.rendering.waterColor, transparent: true, opacity: CFG.rendering.waterOpacity, side: THREE.DoubleSide,
   metalness: 0.1, roughness: 0.15,
 });
 const surfMesh = new THREE.Mesh(surfGeo, surfMat);
@@ -464,8 +465,8 @@ const ledColsSlider = document.getElementById("ledCols");
 const ledColsVal = document.getElementById("ledColsVal");
 const ledRowsSlider = document.getElementById("ledRows");
 const ledRowsVal = document.getElementById("ledRowsVal");
-const glassOpacitySlider = document.getElementById("glassOpacity");
-const glassOpacityVal = document.getElementById("glassOpacityVal");
+const cupOpacitySlider = document.getElementById("cupOpacity");
+const cupOpacityVal = document.getElementById("cupOpacityVal");
 const offLedOpacitySlider = document.getElementById("offLedOpacity");
 const offLedOpacityVal = document.getElementById("offLedOpacityVal");
 const floorGridOpacitySlider = document.getElementById("floorGridOpacity");
@@ -639,8 +640,8 @@ ledColsSlider.value = CFG.led.columns;
 ledColsVal.textContent = CFG.led.columns;
 ledRowsSlider.value = CFG.led.rows;
 ledRowsVal.textContent = CFG.led.rows;
-glassOpacitySlider.value = CFG.rendering.glassOpacity;
-glassOpacityVal.textContent = CFG.rendering.glassOpacity.toFixed(2);
+cupOpacitySlider.value = CFG.rendering.cupOpacity;
+cupOpacityVal.textContent = CFG.rendering.cupOpacity.toFixed(2);
 offLedOpacitySlider.value = CFG.rendering.offLedOpacity;
 offLedOpacityVal.textContent = CFG.rendering.offLedOpacity.toFixed(2);
 floorGridOpacitySlider.value = CFG.rendering.floorGridOpacity;
@@ -743,10 +744,10 @@ document.addEventListener("visibilitychange", () => {
     requestWakeLock();
   }
 });
-glassOpacitySlider.addEventListener("input", () => {
-  CFG.rendering.glassOpacity = parseFloat(glassOpacitySlider.value);
-  glassOpacityVal.textContent = CFG.rendering.glassOpacity.toFixed(2);
-  cupMat.opacity = CFG.rendering.glassOpacity;
+cupOpacitySlider.addEventListener("input", () => {
+  CFG.rendering.cupOpacity = parseFloat(cupOpacitySlider.value);
+  cupOpacityVal.textContent = CFG.rendering.cupOpacity.toFixed(2);
+  cupMat.opacity = CFG.rendering.cupOpacity;
 });
 offLedOpacitySlider.addEventListener("input", () => {
   CFG.rendering.offLedOpacity = parseFloat(offLedOpacitySlider.value);

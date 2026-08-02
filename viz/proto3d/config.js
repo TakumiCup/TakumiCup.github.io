@@ -24,10 +24,20 @@ window.TAKUMI_CONFIG = {
   // breach" indicator, not just instantaneous state.
   rimBreachHoldSec: 2.0,
 
-  // Rendering-only knobs (viz, not physics) -- defaults match what the page
-  // already looked like before these became sliders.
+  // Rendering-only knobs (viz, not physics).
   rendering: {
-    glassOpacity: 0.35,
+    // Paper-cup look (opaque white, matte-ish with a slight sheen) rather
+    // than the earlier transparent "glass" look -- LEDs are mounted
+    // outside the wall surface (see geom/LedMapping's rowRadiusMm), so an
+    // opaque cup doesn't hide them.
+    cupColor: 0xf2ede0,
+    cupOpacity: 0.97,
+    cupRoughness: 0.55,
+    cupMetalness: 0.05,
+    // Vivid, fairly opaque blue rather than a glassy transparent tint, to
+    // read as real water seen from above through the open top.
+    waterColor: 0x29c2f5,
+    waterOpacity: 0.95,
     offLedOpacity: 1.0,
     floorGridOpacity: 1.0,
   },
