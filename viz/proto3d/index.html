@@ -107,6 +107,12 @@
     Show virtual water surface
   </label>
 
+  <label class="checkboxRow">
+    <input id="keepAwake" type="checkbox">
+    Keep screen awake
+  </label>
+  <div id="wakeLockStatus" style="font-size: 10px; color: #7a8; margin-top: 2px;"></div>
+
   <button id="resetBtn">Release (spring back to rest)</button>
 
   <div id="readout"></div>
@@ -648,6 +654,52 @@ ledRowsSlider.addEventListener("input", () => {
 });
 showSurfaceCheckbox.addEventListener("change", () => {
   surfMesh.visible = showSurfaceCheckbox.checked;
+});
+
+// ---- Keep screen awake ----
+// The OS releases a wake lock the instant the tab isn't visible (screen
+// off, app backgrounded, browser minimised), so re-request it whenever the
+// page becomes visible again if the user still wants it on -- otherwise a
+// single brief backgrounding (e.g. answering a call) would silently turn
+// this back off for good with no way to notice until the screen sleeps.
+const keepAwakeCheckbox = document.getElementById("keepAwake");
+const wakeLockStatus = document.getElementById("wakeLockStatus");
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) {
+    wakeLockStatus.textContent = "Not supported in this browser";
+    keepAwakeCheckbox.checked = false;
+    keepAwakeCheckbox.disabled = true;
+    return;
+  }
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLockStatus.textContent = "Screen will stay on";
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+      if (keepAwakeCheckbox.checked && document.visibilityState === "visible") {
+        wakeLockStatus.textContent = "Lock released, reacquiring...";
+      }
+    });
+  } catch (err) {
+    wakeLockStatus.textContent = "Couldn't acquire wake lock: " + err.message;
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) wakeLock.release();
+  wakeLock = null;
+  wakeLockStatus.textContent = "";
+}
+
+keepAwakeCheckbox.addEventListener("change", () => {
+  if (keepAwakeCheckbox.checked) requestWakeLock(); else releaseWakeLock();
+});
+document.addEventListener("visibilitychange", () => {
+  if (keepAwakeCheckbox.checked && document.visibilityState === "visible" && wakeLock === null) {
+    requestWakeLock();
+  }
 });
 glassOpacitySlider.addEventListener("input", () => {
   CFG.rendering.glassOpacity = parseFloat(glassOpacitySlider.value);
