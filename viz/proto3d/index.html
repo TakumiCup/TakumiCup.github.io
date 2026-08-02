@@ -30,6 +30,18 @@
   #panel input[type=range] { width: 100%; }
   #panel label.checkboxRow { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   #panel label.checkboxRow input[type=checkbox] { margin: 0; }
+  #panel details { margin-top: 12px; border-top: 1px solid #333; padding-top: 8px; }
+  #panel details:first-of-type { border-top: none; }
+  #panel summary {
+    cursor: pointer; font-size: 12px; font-weight: 600; color: #9ad;
+    list-style: none; user-select: none;
+  }
+  #panel summary::-webkit-details-marker { display: none; }
+  #panel summary::before {
+    content: "▶"; display: inline-block; margin-right: 6px; font-size: 8px;
+    transition: transform 0.15s ease; transform-origin: center;
+  }
+  #panel details[open] > summary::before { transform: rotate(90deg); }
   #joystick {
     width: 160px; height: 160px; margin: 8px auto 0; border-radius: 50%;
     background: radial-gradient(circle, #1c2027 0%, #10131a 100%);
@@ -48,7 +60,6 @@
   #resetBtn:hover, .panelBtn:hover { background: #2f3c52; }
   .panelBtn.active { background: #2a5a3a; border-color: #3a7a4a; }
   #liveStatus { font-size: 10px; color: #7a8; margin-top: 4px; }
-  hr.sep { border: none; border-top: 1px solid #333; margin: 12px 0 4px; }
 </style>
 </head>
 <body>
@@ -58,57 +69,67 @@
   <h1>TakumiCup — g-force prototype</h1>
   <button id="collapseBtn" class="panelBtn">Hide menu</button>
 
-  <hr class="sep">
-  <label>Live accelerometer (phone)</label>
-  <button id="liveAccelBtn" class="panelBtn">Enable phone accelerometer</button>
-  <button id="recenterBtn" class="panelBtn">Recentre (zero current tilt)</button>
-  <div id="liveStatus">Off -- using joystick below</div>
+  <details open>
+    <summary>Live accelerometer (phone)</summary>
+    <button id="liveAccelBtn" class="panelBtn">Enable phone accelerometer</button>
+    <button id="recenterBtn" class="panelBtn">Recentre (zero current tilt)</button>
+    <div id="liveStatus">Off -- using joystick below</div>
 
-  <label>Accel filter: <span id="accelFilterVal">0.15</span>s <span style="color:#678">(0 = raw)</span></label>
-  <input id="accelFilter" type="range" min="0" max="1" step="0.01" value="0.15">
-  <hr class="sep">
+    <label>Accel filter: <span id="accelFilterVal">0.15</span>s <span style="color:#678">(0 = raw)</span></label>
+    <input id="accelFilter" type="range" min="0" max="1" step="0.01" value="0.15">
+  </details>
 
-  <label>Camera</label>
-  <button id="resetCameraBtn" class="panelBtn">Reset horizontal rotation</button>
-  <button id="rotateCamera180Btn" class="panelBtn">Rotate 180°</button>
-  <hr class="sep">
+  <details open>
+    <summary>Camera</summary>
+    <button id="resetCameraBtn" class="panelBtn">Reset horizontal rotation</button>
+    <button id="rotateCamera180Btn" class="panelBtn">Rotate 180°</button>
+  </details>
 
-  <div id="joystickSection">
-    <label>Horizontal g_eff (drag the dot)</label>
-    <div id="joystick"><div id="stick"></div></div>
-  </div>
+  <details open>
+    <summary>Physics</summary>
+    <div id="joystickSection">
+      <label>Horizontal g_eff (drag the dot)</label>
+      <div id="joystick"><div id="stick"></div></div>
+    </div>
 
-  <label>Sensitivity: <span id="sensitivityVal">1.00</span>x</label>
-  <input id="sensitivity" type="range" min="0.3" max="3" step="0.05" value="1.0">
+    <label>Sensitivity: <span id="sensitivityVal">1.00</span>x</label>
+    <input id="sensitivity" type="range" min="0.3" max="3" step="0.05" value="1.0">
 
-  <label>Natural freq scale</label>
-  <input id="freqScale" type="range" min="0.3" max="3" step="0.05" value="1.0">
+    <label>Natural freq scale</label>
+    <input id="freqScale" type="range" min="0.3" max="3" step="0.05" value="1.0">
 
-  <label>Damping ratio</label>
-  <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.4">
+    <label>Damping ratio</label>
+    <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.4">
 
-  <label>Fill level: <span id="fillVal">70</span>%</label>
-  <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.70">
+    <label>Fill level: <span id="fillVal">70</span>%</label>
+    <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.70">
+  </details>
 
-  <label>LED columns (around): <span id="ledColsVal">24</span></label>
-  <input id="ledCols" type="range" min="6" max="60" step="1" value="24">
+  <details open>
+    <summary>Visuals</summary>
+    <label>LED columns (around): <span id="ledColsVal">24</span></label>
+    <input id="ledCols" type="range" min="6" max="60" step="1" value="24">
 
-  <label>LED rows (vertical): <span id="ledRowsVal">12</span></label>
-  <input id="ledRows" type="range" min="2" max="40" step="1" value="12">
+    <label>LED rows (vertical): <span id="ledRowsVal">12</span></label>
+    <input id="ledRows" type="range" min="2" max="40" step="1" value="12">
 
-  <label>Cup opacity: <span id="cupOpacityVal">0.97</span></label>
-  <input id="cupOpacity" type="range" min="0" max="1" step="0.01" value="0.97">
+    <label>Cup opacity: <span id="cupOpacityVal">0.97</span></label>
+    <input id="cupOpacity" type="range" min="0" max="1" step="0.01" value="0.97">
 
-  <label>Off-LED opacity: <span id="offLedOpacityVal">1.00</span></label>
-  <input id="offLedOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
+    <label>On-LED opacity: <span id="onLedOpacityVal">1.00</span></label>
+    <input id="onLedOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
 
-  <label>Floor grid opacity: <span id="floorGridOpacityVal">1.00</span></label>
-  <input id="floorGridOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
+    <label>Off-LED opacity: <span id="offLedOpacityVal">1.00</span></label>
+    <input id="offLedOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
 
-  <label class="checkboxRow">
-    <input id="showSurface" type="checkbox" checked>
-    Show virtual water surface
-  </label>
+    <label>Floor grid opacity: <span id="floorGridOpacityVal">1.00</span></label>
+    <input id="floorGridOpacity" type="range" min="0" max="1" step="0.01" value="1.0">
+
+    <label class="checkboxRow">
+      <input id="showSurface" type="checkbox" checked>
+      Show virtual water surface
+    </label>
+  </details>
 
   <label class="checkboxRow">
     <input id="keepAwake" type="checkbox">
@@ -409,7 +430,15 @@ function updateSurfaceMesh(tSec) {
   for (let j = 0; j < SURF_SEGMENTS; j++) {
     const theta = (2 * Math.PI * j) / SURF_SEGMENTS;
     const z = currentWallHeight(theta, tSec);
-    pos.setXYZ(j + 1, RIM_R * Math.cos(theta), z, RIM_R * Math.sin(theta));
+    // Use the wall's actual radius at this vertex's height, not a constant
+    // rim radius: on the low side of a tilt the water sits below the rim,
+    // where the tapered wall is narrower, so a constant-radius disk edge
+    // pokes outside the visible cone there (looked like water clipping
+    // through/past the wall). currentWallHeight already solves for exactly
+    // the (r,z) pair where the tilted plane crosses the wall, so the
+    // correct radius is simply the wall's radius at that height.
+    const r = radiusAtHeight(z);
+    pos.setXYZ(j + 1, r * Math.cos(theta), z, r * Math.sin(theta));
     if (z >= HEIGHT - 0.01) touchedRim = true;
   }
   pos.needsUpdate = true;
@@ -432,7 +461,7 @@ function updateSurfaceMesh(tSec) {
   for (const led of ledDots) {
     if (breachHolding && led.row === topRow) {
       led.mesh.material.color.copy(colorSpill);
-      led.mesh.material.opacity = 1;
+      led.mesh.material.opacity = CFG.rendering.onLedOpacity;
       continue;
     }
 
@@ -448,7 +477,8 @@ function updateSurfaceMesh(tSec) {
     const brightness = ledBrightness(waterZ, led.z, led.spacing);
     const displayT = gammaCorrect(brightness); // perceptual, not linear -- see gammaCorrect12Bit in sim/LedState.cpp
     led.mesh.material.color.copy(colorOff).lerp(dangerColor, displayT);
-    led.mesh.material.opacity = CFG.rendering.offLedOpacity + (1 - CFG.rendering.offLedOpacity) * displayT;
+    led.mesh.material.opacity = CFG.rendering.offLedOpacity +
+      (CFG.rendering.onLedOpacity - CFG.rendering.offLedOpacity) * displayT;
   }
 }
 
@@ -467,6 +497,8 @@ const ledRowsSlider = document.getElementById("ledRows");
 const ledRowsVal = document.getElementById("ledRowsVal");
 const cupOpacitySlider = document.getElementById("cupOpacity");
 const cupOpacityVal = document.getElementById("cupOpacityVal");
+const onLedOpacitySlider = document.getElementById("onLedOpacity");
+const onLedOpacityVal = document.getElementById("onLedOpacityVal");
 const offLedOpacitySlider = document.getElementById("offLedOpacity");
 const offLedOpacityVal = document.getElementById("offLedOpacityVal");
 const floorGridOpacitySlider = document.getElementById("floorGridOpacity");
@@ -642,6 +674,8 @@ ledRowsSlider.value = CFG.led.rows;
 ledRowsVal.textContent = CFG.led.rows;
 cupOpacitySlider.value = CFG.rendering.cupOpacity;
 cupOpacityVal.textContent = CFG.rendering.cupOpacity.toFixed(2);
+onLedOpacitySlider.value = CFG.rendering.onLedOpacity;
+onLedOpacityVal.textContent = CFG.rendering.onLedOpacity.toFixed(2);
 offLedOpacitySlider.value = CFG.rendering.offLedOpacity;
 offLedOpacityVal.textContent = CFG.rendering.offLedOpacity.toFixed(2);
 floorGridOpacitySlider.value = CFG.rendering.floorGridOpacity;
@@ -748,6 +782,10 @@ cupOpacitySlider.addEventListener("input", () => {
   CFG.rendering.cupOpacity = parseFloat(cupOpacitySlider.value);
   cupOpacityVal.textContent = CFG.rendering.cupOpacity.toFixed(2);
   cupMat.opacity = CFG.rendering.cupOpacity;
+});
+onLedOpacitySlider.addEventListener("input", () => {
+  CFG.rendering.onLedOpacity = parseFloat(onLedOpacitySlider.value);
+  onLedOpacityVal.textContent = CFG.rendering.onLedOpacity.toFixed(2);
 });
 offLedOpacitySlider.addEventListener("input", () => {
   CFG.rendering.offLedOpacity = parseFloat(offLedOpacitySlider.value);

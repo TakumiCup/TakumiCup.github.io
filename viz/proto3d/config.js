@@ -38,6 +38,7 @@ window.TAKUMI_CONFIG = {
     // read as real water seen from above through the open top.
     waterColor: 0x29c2f5,
     waterOpacity: 0.95,
+    onLedOpacity: 1.0,
     offLedOpacity: 1.0,
     floorGridOpacity: 1.0,
   },
