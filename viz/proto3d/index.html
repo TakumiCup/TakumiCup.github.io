@@ -63,6 +63,9 @@
   <button id="liveAccelBtn" class="panelBtn">Enable phone accelerometer</button>
   <button id="recenterBtn" class="panelBtn">Recentre (zero current tilt)</button>
   <div id="liveStatus">Off -- using joystick below</div>
+
+  <label>Accel filter: <span id="accelFilterVal">0.15</span>s <span style="color:#678">(0 = raw)</span></label>
+  <input id="accelFilter" type="range" min="0" max="1" step="0.01" value="0.15">
   <hr class="sep">
 
   <label>Camera</label>
@@ -477,6 +480,8 @@ const joystickSection = document.getElementById("joystickSection");
 const liveAccelBtn = document.getElementById("liveAccelBtn");
 const recenterBtn = document.getElementById("recenterBtn");
 const liveStatus = document.getElementById("liveStatus");
+const accelFilterSlider = document.getElementById("accelFilter");
+const accelFilterVal = document.getElementById("accelFilterVal");
 const resetCameraBtn = document.getElementById("resetCameraBtn");
 const rotateCamera180Btn = document.getElementById("rotateCamera180Btn");
 
@@ -522,13 +527,23 @@ rotateCamera180Btn.addEventListener("click", () => {
 // angle currently are to the cup's z axis, via a quaternion, so it works
 // regardless of how the holder tilts the phone -- no manual axis mapping.
 let liveAccelActive = false;
-let liveAccel = { x: 0, y: 0, z: 1 }; // in g's, cup-frame, after calibration
+let liveAccel = { x: 0, y: 0, z: 1 }; // in g's, cup-frame, filtered
 const lastRawAccel = new THREE.Vector3(0, 0, G0);
 let refQuaternion = new THREE.Quaternion();
 // True right after "Enable" is pressed until the first real reading comes
 // in -- that first reading auto-recentres, since the phone is presumably
 // already resting in the holder at that point, not mid-motion.
 let needsAutoRecentre = false;
+
+// Low-pass filter on the calibrated signal (a real-car test showed the cup
+// visibly sloshing from sensor noise/vibration alone at rest, since our
+// deliberately light damping doesn't remove noise the way it removes real
+// motion). Time-constant based (not a fixed per-sample coefficient) so
+// behaviour stays consistent regardless of the device's actual
+// devicemotion event rate, which varies by phone.
+let accelFilterTauSec = 0.15;
+const filteredAccel = new THREE.Vector3(0, 0, 1);
+let lastMotionTimestampSec = null;
 
 function onDeviceMotion(e) {
   const g = e.accelerationIncludingGravity;
@@ -537,9 +552,21 @@ function onDeviceMotion(e) {
   if (needsAutoRecentre) {
     recentre();
     needsAutoRecentre = false;
+    return; // recentre() already seeds filteredAccel/liveAccel for this reading
   }
   const calibrated = lastRawAccel.clone().applyQuaternion(refQuaternion).divideScalar(G0);
-  liveAccel.x = calibrated.x; liveAccel.y = calibrated.y; liveAccel.z = calibrated.z;
+
+  const nowSec = performance.now() / 1000;
+  const dt = lastMotionTimestampSec === null ? 0 : Math.max(0, nowSec - lastMotionTimestampSec);
+  lastMotionTimestampSec = nowSec;
+
+  if (accelFilterTauSec <= 0 || dt <= 0) {
+    filteredAccel.copy(calibrated);
+  } else {
+    const alpha = dt / (accelFilterTauSec + dt);
+    filteredAccel.lerp(calibrated, alpha);
+  }
+  liveAccel.x = filteredAccel.x; liveAccel.y = filteredAccel.y; liveAccel.z = filteredAccel.z;
 }
 
 function recentre() {
@@ -547,6 +574,13 @@ function recentre() {
   refQuaternion = new THREE.Quaternion().setFromUnitVectors(
     lastRawAccel.clone().normalize(), new THREE.Vector3(0, 0, 1)
   );
+  // Snap the filter to the new frame instantly instead of drifting into it
+  // over the next second -- the old filtered value was calibrated under
+  // the old (now-replaced) reference orientation.
+  const calibrated = lastRawAccel.clone().applyQuaternion(refQuaternion).divideScalar(G0);
+  filteredAccel.copy(calibrated);
+  lastMotionTimestampSec = performance.now() / 1000;
+  liveAccel.x = filteredAccel.x; liveAccel.y = filteredAccel.y; liveAccel.z = filteredAccel.z;
 }
 
 async function enableLiveAccel() {
@@ -584,6 +618,14 @@ liveAccelBtn.addEventListener("click", () => {
   if (liveAccelActive) disableLiveAccel(); else enableLiveAccel();
 });
 recenterBtn.addEventListener("click", recentre);
+accelFilterSlider.value = CFG.simDefaults.accelFilterTauSec;
+accelFilterVal.textContent = CFG.simDefaults.accelFilterTauSec.toFixed(2);
+accelFilterTauSec = CFG.simDefaults.accelFilterTauSec;
+accelFilterSlider.addEventListener("input", () => {
+  accelFilterTauSec = parseFloat(accelFilterSlider.value);
+  CFG.simDefaults.accelFilterTauSec = accelFilterTauSec;
+  accelFilterVal.textContent = accelFilterTauSec.toFixed(2);
+});
 
 // Sliders start from config, and write back into CFG live so it stays the
 // single source of truth for anything else that reads it.

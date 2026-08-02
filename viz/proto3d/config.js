@@ -64,6 +64,16 @@ window.TAKUMI_CONFIG = {
     // labelled "sensitivity" in the UI since that's how it reads to the eye,
     // even though under the hood it's literally 1/az.
     sensitivity: 1.0,
+
+    // Low-pass filter time constant (seconds) applied to the live phone
+    // accelerometer signal before it reaches the physics -- raw sensor
+    // noise/vibration sits at a much higher frequency than real tilt
+    // changes, and our deliberately light damping (oscillator.dampingRatio,
+    // chosen for a "watery" overshoot feel) doesn't damp that noise away,
+    // so in a moving car it was visibly sloshing from noise alone with no
+    // filtering. 0 = unfiltered passthrough; higher = smoother but laggier.
+    // Not used for the simulated joystick, only real accelerometer input.
+    accelFilterTauSec: 0.15,
   },
 
   led: {
