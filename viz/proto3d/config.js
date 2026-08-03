@@ -41,6 +41,11 @@ window.TAKUMI_CONFIG = {
     onLedOpacity: 1.0,
     offLedOpacity: 1.0,
     floorGridOpacity: 1.0,
+    // Opt-in: flash the entire scene background to CFG.led.colorSpill for
+    // the same rimBreachHoldSec window the top LED row holds red, as a much
+    // harder-to-miss "you spilled" indicator. Off by default since it's a
+    // dramatic effect, not everyone will want it.
+    flashBackgroundOnBreach: false,
   },
 
   oscillator: {

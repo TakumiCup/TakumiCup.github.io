@@ -60,6 +60,11 @@
   #resetBtn:hover, .panelBtn:hover { background: #2f3c52; }
   .panelBtn.active { background: #2a5a3a; border-color: #3a7a4a; }
   #liveStatus { font-size: 10px; color: #7a8; margin-top: 4px; }
+  .resetLine {
+    float: right; margin-left: auto; background: none; border: none;
+    color: #678; cursor: pointer; font-size: 11px; padding: 0 2px; line-height: 1.4;
+  }
+  .resetLine:hover { color: #9ad; }
 </style>
 </head>
 <body>
@@ -68,6 +73,7 @@
 <div id="panel">
   <h1>TakumiCup — g-force prototype</h1>
   <button id="collapseBtn" class="panelBtn">Hide menu</button>
+  <button id="resetAllBtn" class="panelBtn">Reset all to defaults</button>
 
   <details open>
     <summary>Live accelerometer (phone)</summary>
@@ -96,10 +102,10 @@
     <input id="sensitivity" type="range" min="0.3" max="3" step="0.05" value="1.0">
 
     <label>Natural freq scale</label>
-    <input id="freqScale" type="range" min="0.3" max="3" step="0.05" value="1.0">
+    <input id="freqScale" type="range" min="0.3" max="3" step="0.05" value="1.6">
 
     <label>Damping ratio</label>
-    <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.4">
+    <input id="damping" type="range" min="0.05" max="1.5" step="0.02" value="0.1">
 
     <label>Fill level: <span id="fillVal">70</span>%</label>
     <input id="fillFraction" type="range" min="0.3" max="0.98" step="0.01" value="0.70">
@@ -128,6 +134,11 @@
     <label class="checkboxRow">
       <input id="showSurface" type="checkbox" checked>
       Show virtual water surface
+    </label>
+
+    <label class="checkboxRow">
+      <input id="flashBackground" type="checkbox">
+      Flash background red on rim breach
     </label>
   </details>
 
@@ -283,7 +294,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14171c);
+const normalBackgroundColor = 0x14171c;
+scene.background = new THREE.Color(normalBackgroundColor);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 2000);
 // Default view is "behind" the high side: joystick fully up -> ay=+max ->
@@ -291,15 +303,24 @@ const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerH
 // at theta=+90deg, which is the +Z direction (col x=r*cos(theta), z=r*sin(theta)).
 // So the camera sits on +Z looking back at the cup, putting that climbing
 // side nearest the viewer when the stick is pushed up.
-camera.position.set(0, 150, 280);
-camera.lookAt(0, HEIGHT * 0.4, 0);
+// Tilted up 10deg from the original (0,150,280) so the default view looks
+// more steeply down into the open top of the cup: decompose that position
+// into spherical coords around the look-at target and reduce the polar
+// angle (measured from vertical) by 10deg, which raises the camera's
+// elevation while keeping the same distance and azimuth.
+const HOME_TARGET = new THREE.Vector3(0, HEIGHT * 0.4, 0);
+const homeSpherical = new THREE.Spherical().setFromVector3(new THREE.Vector3(0, 150, 280));
+homeSpherical.phi -= THREE.MathUtils.degToRad(10);
+homeSpherical.makeSafe();
+camera.position.copy(HOME_TARGET).add(new THREE.Vector3().setFromSpherical(homeSpherical));
+camera.lookAt(HOME_TARGET);
 
 // Left-drag orbits, right-drag pans, wheel zooms -- standard OrbitControls
 // defaults. The UI panel/joystick sit on top in their own DOM element and
 // stop pointer events from reaching the canvas underneath them, so dragging
 // inside the panel doesn't fight with orbiting the camera.
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, HEIGHT * 0.4, 0);
+controls.target.copy(HOME_TARGET);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 80;
@@ -445,6 +466,11 @@ function updateSurfaceMesh(tSec) {
   surfGeo.computeVertexNormals();
   if (touchedRim) lastBreachSimTime = tSec;
   const breachHolding = (tSec - lastBreachSimTime) < CFG.rimBreachHoldSec;
+  if (CFG.rendering.flashBackgroundOnBreach && breachHolding) {
+    scene.background.set(CFG.led.colorSpill);
+  } else {
+    scene.background.set(normalBackgroundColor);
+  }
 
   const colorOff = new THREE.Color(CFG.led.colorOff);
   const colorBase = new THREE.Color(CFG.led.colorBase);
@@ -504,11 +530,13 @@ const offLedOpacityVal = document.getElementById("offLedOpacityVal");
 const floorGridOpacitySlider = document.getElementById("floorGridOpacity");
 const floorGridOpacityVal = document.getElementById("floorGridOpacityVal");
 const showSurfaceCheckbox = document.getElementById("showSurface");
+const flashBackgroundCheckbox = document.getElementById("flashBackground");
 const readout = document.getElementById("readout");
 const resetBtn = document.getElementById("resetBtn");
 const panel = document.getElementById("panel");
 const menuToggle = document.getElementById("menuToggle");
 const collapseBtn = document.getElementById("collapseBtn");
+const resetAllBtn = document.getElementById("resetAllBtn");
 const joystickSection = document.getElementById("joystickSection");
 const liveAccelBtn = document.getElementById("liveAccelBtn");
 const recenterBtn = document.getElementById("recenterBtn");
@@ -633,6 +661,13 @@ async function enableLiveAccel() {
   window.addEventListener("devicemotion", onDeviceMotion);
   liveAccelActive = true;
   joystickSection.style.display = "none";
+  // There's no situation where you want live sensor input and the screen
+  // asleep -- force it on (reusing the checkbox's own listener so it goes
+  // through the exact same wake-lock request path as a manual toggle).
+  if (!keepAwakeCheckbox.checked) {
+    keepAwakeCheckbox.checked = true;
+    keepAwakeCheckbox.dispatchEvent(new Event("change"));
+  }
   liveAccelBtn.classList.add("active");
   liveAccelBtn.textContent = "Disable phone accelerometer";
   liveStatus.textContent = "Live -- zeroed to the holder's current position";
@@ -731,6 +766,9 @@ ledRowsSlider.addEventListener("input", () => {
 });
 showSurfaceCheckbox.addEventListener("change", () => {
   surfMesh.visible = showSurfaceCheckbox.checked;
+});
+flashBackgroundCheckbox.addEventListener("change", () => {
+  CFG.rendering.flashBackgroundOnBreach = flashBackgroundCheckbox.checked;
 });
 
 // ---- Keep screen awake ----
@@ -841,6 +879,68 @@ function animate() {
   controls.update();
   renderer.render(scene, camera);
 }
+
+// ---- Settings persistence (localStorage) + reset buttons ----
+// Every range/checkbox in the panel is treated generically: saved/restored
+// by element id, and reset by restoring the DOM's own defaultValue/
+// defaultChecked (the value the HTML declares, which is kept in sync with
+// config.js's factory defaults) and re-dispatching the same input/change
+// event the control's own listener already handles -- so this needs no
+// per-control knowledge of what a reset should actually DO, it just reuses
+// the exact code path a manual interaction would trigger.
+const SETTINGS_KEY = "takumicup_settings_v1";
+function persistentControls() {
+  return Array.from(document.querySelectorAll(
+    "#panel input[type=range], #panel input[type=checkbox]"
+  ));
+}
+function eventNameFor(el) {
+  return el.type === "checkbox" ? "change" : "input";
+}
+function saveSettings() {
+  const data = {};
+  for (const el of persistentControls()) {
+    data[el.id] = el.type === "checkbox" ? el.checked : el.value;
+  }
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(data)); } catch (err) { /* storage unavailable/full: skip silently */ }
+}
+function loadSettings() {
+  let data;
+  try { data = JSON.parse(localStorage.getItem(SETTINGS_KEY)); } catch (err) { return; }
+  if (!data) return;
+  for (const el of persistentControls()) {
+    if (!(el.id in data)) continue;
+    if (el.type === "checkbox") el.checked = data[el.id];
+    else el.value = data[el.id];
+    el.dispatchEvent(new Event(eventNameFor(el)));
+  }
+}
+function resetControl(el) {
+  if (el.type === "checkbox") el.checked = el.defaultChecked;
+  else el.value = el.defaultValue;
+  el.dispatchEvent(new Event(eventNameFor(el)));
+}
+function resetAll() {
+  for (const el of persistentControls()) resetControl(el);
+}
+function attachResetButton(el) {
+  const label = el.type === "checkbox" ? el.closest("label") : el.previousElementSibling;
+  if (!label || label.tagName !== "LABEL") return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "resetLine";
+  btn.title = "Reset to default";
+  btn.textContent = "↺";
+  btn.addEventListener("click", (e) => { e.preventDefault(); resetControl(el); });
+  label.appendChild(btn);
+}
+for (const el of persistentControls()) {
+  attachResetButton(el);
+  el.addEventListener(eventNameFor(el), saveSettings);
+}
+resetAllBtn.addEventListener("click", resetAll);
+loadSettings();
+
 animate();
 
 window.addEventListener("resize", () => {
